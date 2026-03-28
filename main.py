@@ -3,6 +3,7 @@ from pydantic import BaseModel
 import numpy as np
 import pickle
 import os
+import datetime
 
 app = FastAPI()
 
@@ -36,33 +37,38 @@ def predict_demand(request: ForecastRequest):
 
     quantities = [item.quantity for item in request.historical_data]
     
-    # Cần 30 ngày để dự đoán
-    if len(quantities) < 30:
-        padding = [0] * (30 - len(quantities))
+    # Chỉ cần đúng 4 ngày để dự đoán
+    if len(quantities) < 4:
+        padding = [0] * (4 - len(quantities))
         quantities = padding + quantities
     
-    last_30_days = quantities[-30:]
+    # Lấy CHÍNH XÁC 4 ngày cuối cùng
+    last_4_days = quantities[-4:]
     
-    # Chuẩn hóa
-    scaled_data = SCALER.transform(np.array(last_30_days).reshape(-1, 1))
+    # Chuẩn hóa mảng 4 ngày
+    scaled_data = SCALER.transform(np.array(last_4_days).reshape(-1, 1))
     
-    # Dự đoán 7 ngày
+    # Đưa về ma trận 1 dòng, 4 cột để đút vào AI
+    current_input = scaled_data.reshape(1, 4) 
+    
+    # Dự đoán 7 ngày tiếp theo
     predicted_7_days = []
-    current_input = scaled_data.reshape(1, 30) 
     
     for _ in range(7):
+        # AI đoán ngày tiếp theo (trả về số đã chuẩn hóa)
         next_day_scaled = AI_MODEL.predict(current_input)
+        
+        # Dịch ngược số đã chuẩn hóa về số lượng sản phẩm thật
         next_day_real = SCALER.inverse_transform([[next_day_scaled[0]]])
         predicted_quantity = max(0, int(round(next_day_real[0][0])))
         
         predicted_7_days.append(predicted_quantity)
         
-        # Trượt cửa sổ: Bỏ ngày đầu, nhét ngày mới đoán vào cuối
+        # Trượt cửa sổ: Cắt bỏ ngày cũ nhất (cột 0), nhét ngày mới đoán vào cuối
         current_input = np.append(current_input[:, 1:], [[next_day_scaled[0]]], axis=1)
 
     total_predicted = sum(predicted_7_days)
     
-    import datetime
     base = datetime.datetime.today()
     forecast_details = []
     for i in range(7):
@@ -72,6 +78,7 @@ def predict_demand(request: ForecastRequest):
     return {
         "status": "success",
         "product_id": request.product_id,
+        "input_4_days": last_4_days, # In ra để debug xem nó lấy đúng 4 ngày chưa
         "total_predicted_7_days": total_predicted,
         "forecast_details": forecast_details
     }
